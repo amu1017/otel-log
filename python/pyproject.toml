@@ -1,0 +1,100 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "otel-logging-example"
+version = "1.0.0"
+description = "OpenTelemetry Python ログ統合のサンプルプロジェクト"
+readme = "README.md"
+license = {text = "MIT"}
+authors = [
+    {name = "OpenTelemetry Python Example", email = "example@opentelemetry.io"}
+]
+maintainers = [
+    {name = "OpenTelemetry Python Example", email = "example@opentelemetry.io"}
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: System :: Logging",
+    "Topic :: System :: Monitoring",
+]
+requires-python = ">=3.8"
+dependencies = [
+    "opentelemetry-sdk==1.27.0",
+    "opentelemetry-distro==0.48b0",
+    "opentelemetry-api==1.27.0",
+    "opentelemetry-exporter-otlp==1.27.0",
+    "opentelemetry-instrumentation-logging==0.48b0",
+    "opentelemetry-semantic-conventions==0.48b0",
+    "opentelemetry-proto==1.27.0",
+    "opentelemetry-instrumentation==0.48b0",
+    "grpcio>=1.60.0",
+    "grpcio-status>=1.60.0",
+    "protobuf>=4.21.0",
+    "typing-extensions>=4.0.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/open-telemetry/opentelemetry-python"
+Documentation = "https://opentelemetry-python.readthedocs.io/"
+Repository = "https://github.com/open-telemetry/opentelemetry-python-contrib"
+"Bug Tracker" = "https://github.com/open-telemetry/opentelemetry-python/issues"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
+    "black>=22.0.0",
+    "flake8>=5.0.0",
+    "mypy>=1.0.0",
+]
+
+[project.scripts]
+otel-logging-example = "example_otel.logging_example:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.black]
+line-length = 88
+target-version = ['py38']
+include = '\.pyi?$'
+extend-exclude = '''
+/(
+  # directories
+  \.eggs
+  | \.git
+  | \.hg
+  | \.mypy_cache
+  | \.tox
+  | \.venv
+  | build
+  | dist
+)/
+'''
+
+[tool.mypy]
+python_version = "3.8"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+
+[tool.pytest.ini_options]
+minversion = "7.0"
+addopts = "-ra -q --cov=example_otel --cov-report=term-missing"
+testpaths = [
+    "tests",
+    "src",
+]

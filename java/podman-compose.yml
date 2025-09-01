@@ -1,0 +1,145 @@
+# Podman Compose 設定ファイル
+#
+# このファイルは OpenTelemetry Java Log4j Appender サンプルアプリケーションを
+# Podman 環境で実行するための設定を定義します。
+#
+# 【前提条件】
+# - 既存の OpenTelemetry Collector がローカルホスト上で稼働中
+# - Collector の OTLP レシーバーがポート 4317 で待機
+#
+# 【実行方法】
+# podman-compose up
+
+version: '3.8'
+
+services:
+  # OpenTelemetry Java Log4j サンプルアプリケーション
+  otel-java-app:
+    # Dockerfileからイメージをビルド
+    build:
+      context: .
+      dockerfile: Dockerfile
+      # ビルド引数（必要に応じて）
+      args:
+        - JAVA_VERSION=17
+    
+    # コンテナ名の指定
+    container_name: otel-java-log4j-example
+    
+    # 環境変数の設定
+    environment:
+      # OpenTelemetry 基本設定
+      - OTEL_SERVICE_NAME=otel-log4j-example
+      - OTEL_SERVICE_VERSION=1.0.0
+      - OTEL_SERVICE_NAMESPACE=example.com
+      
+      # OTLP エクスポーター設定（ループバックアドレス使用）
+      # 既存のCollectorがホストマシンのlocalhost:4317で稼働しているため
+      # コンテナからホストへアクセスするためのアドレスを指定
+      - OTEL_EXPORTER_OTLP_LOGS_ENDPOINT=http://host.containers.internal:4317
+      - OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://host.containers.internal:4317
+      - OTEL_EXPORTER_OTLP_METRICS_ENDPOINT=http://host.containers.internal:4317
+      
+      # OTLP プロトコル設定
+      - OTEL_EXPORTER_OTLP_PROTOCOL=grpc
+      - OTEL_EXPORTER_OTLP_COMPRESSION=gzip
+      
+      # エクスポート間隔とバッチ設定
+      - OTEL_BSP_SCHEDULE_DELAY=500               # スパンバッチ送信間隔（ミリ秒）
+      - OTEL_BSP_MAX_EXPORT_BATCH_SIZE=512        # スパンバッチ最大サイズ
+      - OTEL_BSP_EXPORT_TIMEOUT=2000              # スパンエクスポートタイムアウト（ミリ秒）
+      - OTEL_BLRP_SCHEDULE_DELAY=500              # ログバッチ送信間隔（ミリ秒）
+      - OTEL_BLRP_MAX_EXPORT_BATCH_SIZE=512       # ログバッチ最大サイズ
+      - OTEL_BLRP_EXPORT_TIMEOUT=2000             # ログエクスポートタイムアウト（ミリ秒）
+      
+      # リソース属性（アプリケーション識別のため）
+      - OTEL_RESOURCE_ATTRIBUTES=service.name=otel-log4j-example,service.version=1.0.0,service.namespace=example.com,deployment.environment=development
+      
+      # Java VM 設定
+      - JAVA_OPTS=-server -Xms256m -Xmx512m -XX:+UseG1GC
+      - JAVA_TOOL_OPTIONS=-Dfile.encoding=UTF-8 -Duser.timezone=Asia/Tokyo
+      
+      # ログレベル調整
+      - LOG_LEVEL=INFO
+    
+    # ネットワーク設定
+    # ホストネットワークを使用して、ホスト上のCollectorに直接アクセス
+    network_mode: host
+    
+    # または、カスタムネットワークを使用する場合：
+    # networks:
+    #   - otel-network
+    
+    # ボリュームマウント（オプション）
+    volumes:
+      # ログファイル出力用のボリューム（必要に応じて）
+      - "./logs:/app/logs"
+      
+      # 設定ファイルの外部化（必要に応じて）
+      # - "./custom-log4j2.xml:/app/config/log4j2.xml:ro"
+    
+    # 再起動ポリシー
+    restart: unless-stopped
+    
+    # リソース制限（本番環境では必須）
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'        # CPU制限: 0.5コア
+          memory: 512M       # メモリ制限: 512MB
+        reservations:
+          cpus: '0.1'        # CPU予約: 0.1コア
+          memory: 256M       # メモリ予約: 256MB
+    
+    # ヘルスチェック設定
+    healthcheck:
+      test: ["CMD", "java", "-version"]  # 簡易ヘルスチェック
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    
+    # 依存関係（他のサービスに依存する場合）
+    # 既存のCollectorは外部で稼働しているため、depends_onは不要
+    
+    # ログ設定
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"      # ログファイル最大サイズ
+        max-file: "3"        # ローテーション保持数
+
+# カスタムネットワーク定義（network_mode: host を使わない場合）
+networks:
+  otel-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
+
+# ボリューム定義
+volumes:
+  # アプリケーションログ用ボリューム
+  otel-logs:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ./logs
+
+# 【Podman固有の注意事項】
+#
+# 1. host.containers.internal の代替
+#    Podmanでは host.containers.internal が使用できない場合があります。
+#    その場合は以下の代替方法を使用してください：
+#    - network_mode: host を使用（推奨）
+#    - または環境変数で直接IPアドレスを指定
+#
+# 2. 権限設定
+#    Podmanはrootlessモードで動作するため、ボリュームマウント時の
+#    権限設定に注意が必要です。
+#
+# 3. 実行コマンド
+#    podman-compose up --build    # ビルドして実行
+#    podman-compose down          # 停止・削除
+#    podman-compose logs -f       # ログ表示

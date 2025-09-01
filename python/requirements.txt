@@ -1,0 +1,52 @@
+# OpenTelemetry Python ログ統合のための依存関係
+# 
+# このファイルは OpenTelemetry Python SDK を使用したログ統合サンプルの
+# 必要なライブラリを定義します。
+#
+# 【重要な依存関係】
+# 1. opentelemetry-sdk : OpenTelemetryの基本SDK
+# 2. opentelemetry-exporter-otlp : OTLPフォーマットでログをエクスポート
+# 3. opentelemetry-instrumentation-logging : Pythonログライブラリとの統合
+# 4. opentelemetry-distro : 自動計装とセットアップ
+
+# OpenTelemetry 基本SDK
+# テレメトリーデータ（ログ、メトリクス、トレース）を収集・処理するためのコア機能
+opentelemetry-sdk==1.27.0
+
+# OpenTelemetry ディストリビューション
+# 自動計装機能や簡単なセットアップを提供
+opentelemetry-distro==0.48b0
+
+# OpenTelemetry ログ機能
+# ログ特化の機能を提供
+opentelemetry-api==1.27.0
+
+# OTLP Exporter
+# 収集したテレメトリーデータをOTLP形式でエクスポートするために必要
+opentelemetry-exporter-otlp==1.27.0
+
+# Pythonログとの統合
+# Python標準ライブラリのloggingモジュールとOpenTelemetryの統合
+opentelemetry-instrumentation-logging==0.48b0
+
+# セマンティック規約
+# 標準的な属性名やリソース識別子を提供
+opentelemetry-semantic-conventions==0.48b0
+
+# OTLP プロトコルバッファ
+# OTLPプロトコル通信に必要
+opentelemetry-proto==1.27.0
+
+# 追加のログ機能（Pythonのログハンドラ統合）
+opentelemetry-instrumentation==0.48b0
+
+# gRPC サポート（OTLPエクスポート用）
+grpcio==1.66.1
+grpcio-status==1.66.1
+
+# Protobuf（プロトコルバッファ）
+protobuf==5.28.2
+
+# その他のユーティリティ
+# 構造化ログやJSONログのための追加ライブラリ
+typing-extensions==4.12.2

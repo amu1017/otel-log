@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Log4j2 設定ファイル
+  
+  このファイルは Log4j2 ロガーの動作を制御します。
+  OpenTelemetry Appender を設定することで、通常のログ出力と同時に
+  OpenTelemetry 形式でのテレメトリーデータも送信されます。
+  
+  【設定のポイント】
+  1. Console Appender: 従来通りの標準出力
+  2. OpenTelemetry Appender: OpenTelemetryへのログ転送
+  3. Root Logger: 両方のAppenderを有効にしてログの二重出力を実現
+-->
+<Configuration status="WARN">
+    <Appenders>
+        <!-- コンソール出力用のAppender -->
+        <!-- アプリケーション実行時にログを画面で確認するため -->
+        <Console name="Console" target="SYSTEM_OUT">
+            <PatternLayout pattern="%d{yyyy-MM-dd HH:mm:ss} [%t] %-5level %logger{36} - %msg%n"/>
+        </Console>
+
+        <!-- OpenTelemetry Appender の設定 -->
+        <!-- このAppenderがLog4jのログイベントをOpenTelemetryのログ形式に変換する -->
+        <OpenTelemetry name="OpenTelemetryAppender"
+                      captureExperimentalAttributes="true"
+                      captureCodeAttributes="true"
+                      captureMapMessageAttributes="true"
+                      captureMarkerAttribute="true"
+                      captureContextDataAttributes="*">
+            
+            <!-- 
+              【各属性の説明】
+              - captureExperimentalAttributes: スレッド名やスレッドIDなどの実験的属性を取得
+              - captureCodeAttributes: ソースコードの場所（クラス名、メソッド名、行番号）を取得
+              - captureMapMessageAttributes: Map形式のログメッセージの属性を取得
+              - captureMarkerAttribute: Log4jのMarker情報を取得
+              - captureContextDataAttributes: "*" で全てのコンテキストデータ属性を取得
+            -->
+            
+        </OpenTelemetry>
+    </Appenders>
+
+    <Loggers>
+        <!-- ルートロガーの設定 -->
+        <!-- 全てのログメッセージがここを通る -->
+        <Root level="INFO">
+            <!-- コンソールとOpenTelemetryの両方に出力 -->
+            <AppenderRef ref="Console"/>
+            <AppenderRef ref="OpenTelemetryAppender"/>
+        </Root>
+
+        <!-- パッケージ別の詳細ログ設定例 -->
+        <!-- OpenTelemetry関連のログをDEBUGレベルで表示する場合の設定 -->
+        <Logger name="io.opentelemetry" level="INFO" additivity="false">
+            <AppenderRef ref="Console"/>
+            <AppenderRef ref="OpenTelemetryAppender"/>
+        </Logger>
+
+        <!-- アプリケーション固有のロガー設定 -->
+        <Logger name="com.example.otel" level="DEBUG" additivity="false">
+            <AppenderRef ref="Console"/>
+            <AppenderRef ref="OpenTelemetryAppender"/>
+        </Logger>
+    </Loggers>
+</Configuration>
