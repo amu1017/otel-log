@@ -683,6 +683,460 @@ export OTEL_EXPORTER_OTLP_LOGS_ENDPOINT=http://localhost:4317
 
 ---
 
+## 7. リソースコンテキストの付与メカニズム
+
+リソースコンテキストは、**どのサービスからテレメトリーデータが送信されたか**を識別する重要な情報です。OpenTelemetry Python では、この情報が以下のフローで自動的にログに付与されます。
+
+### 7.1 リソース属性付与の全体フロー
+
+```mermaid
+flowchart TD
+    A[Resource作成] -->|明示的設定| B[Service Attributes]
+    A -->|自動検出| C[Process Attributes]
+    A -->|自動検出| D[Host/OS Attributes]
+    
+    B --> E[Resource.create/merge]
+    C --> E
+    D --> E
+    
+    E --> F[LoggerProvider初期化]
+    F --> G[LoggerProvider内リソース保持]
+    
+    G --> H[logger.info呼び出し]
+    H --> I[LogRecord → LoggingHandler]
+    I --> J[emit変換処理]
+    
+    J --> K[OpenTelemetryLogRecord作成]
+    K -->|暗黙的関連付け| L[Resource参照付与]
+    L --> M[BatchLogRecordProcessor]
+    M --> N[OTLPLogExporter]
+    N --> O[ResourceLogs構造]
+    
+    classDef resource fill:#e3f2fd
+    classDef process fill:#fff3e0
+    classDef export fill:#f3e5f5
+    
+    class A,B,C,D,E,F,G resource
+    class H,I,J,K,L process
+    class M,N,O export
+```
+
+### 7.2 リソース情報の設定場所
+
+Python版では、以下の方法でリソース情報を設定します：
+
+```python
+# 1. Resource オブジェクトの作成（初期化時）
+from opentelemetry.sdk.resources import Resource
+from opentelemetry.semconv.resource import ResourceAttributes
+
+resource = Resource.create({
+    ResourceAttributes.SERVICE_NAME: "otel-python-logging-example",
+    ResourceAttributes.SERVICE_VERSION: "1.0.0",
+    ResourceAttributes.SERVICE_NAMESPACE: "example.com"
+})
+
+# 2. LoggerProvider へのリソース関連付け
+from opentelemetry.sdk.logs import LoggerProvider
+
+logger_provider = LoggerProvider(resource=resource)
+```
+
+**重要なポイント**: リソース情報は `LoggerProvider(resource=resource)` で設定され、そのプロバイダーから作成される**すべてのLogRecord**に自動的に関連付けられます。
+
+### 7.3 自動付与されるリソース属性の詳細
+
+```mermaid
+graph TD
+    subgraph 明示的設定
+        A[アプリケーション開発者]
+        A1[service.name]
+        A2[service.version]
+        A3[service.namespace]
+        A4[service.instance.id]
+    end
+    
+    subgraph 自動検出システム
+        B[Resource.create]
+        B1[ProcessResourceDetector]
+        B2[HostResourceDetector]
+        B3[OSResourceDetector]
+        B4[ContainerResourceDetector]
+        B5[EnvironmentResourceDetector]
+    end
+    
+    subgraph 検出属性
+        C1[process.pid]
+        C2[process.executable.name]
+        C3[process.runtime.name]
+        C4[process.runtime.version]
+        C5[host.name]
+        C6[host.arch]
+        C7[os.type]
+        C8[os.description]
+        C9[container.id]
+        C10[cloud.provider ※環境変数から]
+    end
+    
+    A --> A1
+    A --> A2
+    A --> A3
+    A --> A4
+    
+    B --> B1
+    B --> B2
+    B --> B3
+    B --> B4
+    B --> B5
+    
+    B1 --> C1
+    B1 --> C2
+    B1 --> C3
+    B1 --> C4
+    B2 --> C5
+    B2 --> C6
+    B3 --> C7
+    B3 --> C8
+    B4 --> C9
+    B5 --> C10
+    
+    classDef explicit fill:#e8f5e8
+    classDef auto fill:#fff3e0
+    classDef attrs fill:#f3e5f5
+    
+    class A,A1,A2,A3,A4 explicit
+    class B,B1,B2,B3,B4,B5 auto
+    class C1,C2,C3,C4,C5,C6,C7,C8,C9,C10 attrs
+```
+
+OpenTelemetry Python SDK は、明示的に設定した属性に加えて、以下の情報を**自動的**に検出・付与します：
+
+```python
+# Resource.create() で自動検出される属性例
+from opentelemetry.sdk.resources import Resource
+
+# デフォルトリソースの取得
+default_resource = Resource.get_empty()
+detected_resource = Resource.create()  # 自動検出実行
+
+# 実際に含まれる属性の例:
+# - "process.pid": プロセスID
+# - "process.executable.name": "python" 
+# - "process.runtime.name": "CPython"
+# - "process.runtime.version": "3.11.5"
+# - "process.runtime.description": "CPython 3.11.5"
+# - "os.type": "linux" / "windows" / "darwin"
+# - "os.description": OS詳細情報
+# - "host.name": ホスト名
+# - "host.arch": "x86_64" / "arm64" 等
+
+print(f"検出されたリソース属性: {detected_resource.attributes}")
+```
+
+### 7.4 リソースコンテキスト付与のタイミング
+
+```mermaid
+sequenceDiagram
+    participant App as アプリケーション
+    participant PythonLog as Python Logger
+    participant Handler as LoggingHandler
+    participant Provider as LoggerProvider
+    participant OtelLog as OpenTelemetryLogger
+    participant LogRecord as LogRecordData
+    participant Processor as BatchLogRecordProcessor
+
+    Note over Provider: 初期化時にResourceが設定済み
+    Provider->>Provider: resource = Resource(service.name=example, process.pid=12345, ...)
+
+    App->>PythonLog: logger.info("メッセージ")
+    PythonLog->>Handler: LogRecord
+    Handler->>Provider: get_logger()
+    Provider-->>Handler: OpenTelemetryLogger(resource参照含む)
+
+    Handler->>Handler: LogRecord変換処理
+    Handler->>OtelLog: log_record_builder()
+    Handler->>OtelLog: builder.set_body("メッセージ")
+    Handler->>OtelLog: builder.set_severity(INFO)
+    Handler->>OtelLog: builder.emit()
+
+    OtelLog->>LogRecord: LogRecordData作成
+    Note over LogRecord: この時点で暗黙的にResource参照が関連付け
+    LogRecord-->>LogRecord: resource = Provider.resource
+    
+    OtelLog->>Processor: processor.on_emit(LogRecordData)
+    Note over Processor: LogRecordDataにはResource情報が含まれている
+```
+
+```python
+# LoggingHandler内でのリソース関連付けフロー（疑似コード）
+
+class LoggingHandler(Handler):
+    def __init__(self, logger_provider: LoggerProvider):
+        super().__init__()
+        self._logger_provider = logger_provider
+        # LoggerProviderからOpenTelemetryLoggerを取得
+        self._otel_logger = logger_provider.get_logger(__name__)
+    
+    def emit(self, record: logging.LogRecord) -> None:
+        # 1. Python標準ログからOpenTelemetryログレコードへの変換
+        log_record_builder = self._otel_logger.log_record_builder()
+        
+        # 2. ログ固有の属性を設定
+        log_record_builder.set_body(record.getMessage())
+        log_record_builder.set_severity(self._map_severity(record.levelno))
+        log_record_builder.set_timestamp(int(record.created * 1_000_000_000))
+        
+        # 3. ログレコードとして emit（この時点でリソース参照が暗黙的に関連付け）
+        log_record_builder.emit()
+
+# OpenTelemetryLogger内部処理（疑似コード）
+class Logger:
+    def __init__(self, resource: Resource, processors: List[LogRecordProcessor]):
+        self._resource = resource  # LoggerProviderから受け継いだリソース
+        self._processors = processors
+    
+    def emit(self, log_record_builder: LogRecordBuilder) -> None:
+        # LogRecordBuilderからLogRecordDataを作成
+        log_record = log_record_builder.build()
+        
+        # この時点で log_record は以下を持つ：
+        # - ログ固有の属性（メッセージ、レベル、タイムスタンプ等）
+        # - 暗黙的なリソース参照（service.name, process.pid等）
+        log_record._resource = self._resource
+        
+        # プロセッサーチェーンに渡す
+        for processor in self._processors:
+            processor.on_emit(log_record)
+```
+
+### 7.5 エクスポート時のリソース情報処理
+
+```mermaid
+flowchart TD
+    A[List&lt;LogRecordData&gt;] -->|リソース別グループ化| B[Dict&lt;Resource, List&lt;LogRecordData&gt;&gt;]
+    
+    B --> C[Resource 1]
+    B --> D[Resource 2]
+    
+    C --> C1[ResourceLogs作成]
+    D --> D1[ResourceLogs作成]
+    
+    C1 --> C2[Resource属性をOTLP変換]
+    D1 --> D2[Resource属性をOTLP変換]
+    
+    C2 --> C3[service.name: python-example]
+    C2 --> C4[process.pid: 12345]
+    C2 --> C5[host.name: server-01]
+    C2 --> C6[process.runtime.name: CPython]
+    
+    D2 --> D3[service.name: other-service]
+    D2 --> D4[process.pid: 67890]
+    D2 --> D5[host.name: server-02]
+    D2 --> D6[process.runtime.name: CPython]
+    
+    C1 --> C7[LogRecord配列追加]
+    D1 --> D7[LogRecord配列追加]
+    
+    C7 --> E[ExportLogsServiceRequest]
+    D7 --> E
+    
+    classDef input fill:#e3f2fd
+    classDef group fill:#fff3e0
+    classDef resource fill:#f3e5f5
+    classDef output fill:#e8f5e8
+    
+    class A input
+    class B,C,D group
+    class C1,C2,C3,C4,C5,C6,D1,D2,D3,D4,D5,D6 resource
+    class C7,D7,E output
+```
+
+```python
+# OTLPLogExporter でのリソース処理（疑似コード）
+from opentelemetry.proto.logs.v1 import logs_pb2
+from opentelemetry.proto.resource.v1 import resource_pb2
+from collections import defaultdict
+
+class OTLPLogExporter:
+    def export(self, log_records: List[LogRecordData]) -> ExportResult:
+        # 1. リソース別にログレコードをグループ化
+        resource_logs_map = defaultdict(list)
+        for log_record in log_records:
+            resource_logs_map[log_record.resource].append(log_record)
+        
+        # 2. ExportLogsServiceRequestを構築
+        export_request = logs_pb2.ExportLogsServiceRequest()
+        
+        for resource, logs in resource_logs_map.items():
+            # ResourceLogsを作成
+            resource_logs = logs_pb2.ResourceLogs()
+            
+            # リソース属性をProtobuf形式に変換
+            pb_resource = resource_pb2.Resource()
+            for key, value in resource.attributes.items():
+                attribute = pb_resource.attributes.add()
+                attribute.key = key
+                attribute.value.CopyFrom(self._convert_to_any_value(value))
+            
+            resource_logs.resource.CopyFrom(pb_resource)
+            
+            # ログレコード配列を設定
+            for log_record in logs:
+                pb_log_record = logs_pb2.LogRecord()
+                
+                # ログ固有の属性を設定
+                pb_log_record.time_unix_nano = log_record.timestamp
+                pb_log_record.severity_number = log_record.severity.value
+                pb_log_record.severity_text = log_record.severity.name
+                pb_log_record.body.string_value = str(log_record.body)
+                
+                # ログレコード固有の属性を追加
+                for attr_key, attr_value in log_record.attributes.items():
+                    attribute = pb_log_record.attributes.add()
+                    attribute.key = attr_key
+                    attribute.value.CopyFrom(self._convert_to_any_value(attr_value))
+                
+                resource_logs.log_records.append(pb_log_record)
+            
+            export_request.resource_logs.append(resource_logs)
+        
+        # 3. gRPC経由で送信
+        return self._send_to_collector(export_request)
+```
+
+### 7.6 実際のOTLP出力構造
+
+```mermaid
+graph TD
+    subgraph ExportLogsServiceRequest
+        A[resource_logs配列]
+    end
+    
+    subgraph ResourceLogs
+        B[resource部分]
+        C[log_records配列]
+    end
+    
+    subgraph Resource部分[リソース情報]
+        D[service.name: otel-python-example]
+        E[service.version: 1.0.0]
+        F[process.pid: 12345]
+        G[process.runtime.name: CPython]
+        H[host.name: server-01]
+        I[os.type: linux]
+    end
+    
+    subgraph LogRecords部分[ログレコード配列]
+        J[LogRecord 1]
+        K[LogRecord 2]
+        L[LogRecord N]
+    end
+    
+    subgraph LogRecord詳細
+        M[time_unix_nano]
+        N[severity_number]
+        O[body]
+        P[attributes配列]
+    end
+    
+    A --> B
+    A --> C
+    B --> D
+    B --> E
+    B --> F
+    B --> G
+    B --> H
+    B --> I
+    C --> J
+    C --> K
+    C --> L
+    J --> M
+    J --> N
+    J --> O
+    J --> P
+    
+    classDef request fill:#e3f2fd
+    classDef resource fill:#fff3e0
+    classDef logs fill:#f3e5f5
+    classDef detail fill:#e8f5e8
+    
+    class A request
+    class B,D,E,F,G,H,I resource
+    class C,J,K,L logs
+    class M,N,O,P detail
+```
+
+Python版でのOTLP出力例：
+
+```json
+{
+  "resource_logs": [
+    {
+      "resource": {
+        "attributes": [
+          {"key": "service.name", "value": {"string_value": "otel-python-logging-example"}},
+          {"key": "service.version", "value": {"string_value": "1.0.0"}},
+          {"key": "process.pid", "value": {"int_value": 12345}},
+          {"key": "process.runtime.name", "value": {"string_value": "CPython"}},
+          {"key": "process.runtime.version", "value": {"string_value": "3.11.5"}},
+          {"key": "host.name", "value": {"string_value": "server-01"}},
+          {"key": "os.type", "value": {"string_value": "linux"}}
+        ]
+      },
+      "log_records": [
+        {
+          "time_unix_nano": "1640995200000000000",
+          "severity_number": 9,
+          "severity_text": "INFO",
+          "body": {"string_value": "ユーザーログイン: name=田中太郎, id=12345"},
+          "attributes": [
+            {"key": "code.function", "value": {"string_value": "demonstrate_structured_logging"}},
+            {"key": "code.filepath", "value": {"string_value": "src/example_otel/logging_example.py"}},
+            {"key": "code.lineno", "value": {"int_value": 225}},
+            {"key": "user_id", "value": {"int_value": 12345}},
+            {"key": "operation", "value": {"string_value": "login"}},
+            {"key": "trace_id", "value": {"string_value": "abc123..."}},
+            {"key": "span_id", "value": {"string_value": "def456..."}}
+          ]
+        }
+      ]
+    }
+  ]
+}
+```
+
+### 7.7 Python固有のリソース検出機能
+
+```python
+# Python固有のリソース検出例
+from opentelemetry.sdk.resources import Resource
+from opentelemetry.sdk.resources.processor import ResourceProcessor
+
+# カスタムリソースディテクターの例
+class CustomResourceDetector:
+    def detect(self) -> Resource:
+        import sys
+        import platform
+        
+        return Resource.create({
+            "python.implementation": platform.python_implementation(),
+            "python.version": platform.python_version(),
+            "python.executable": sys.executable,
+            "python.path": ",".join(sys.path[:3]),  # 最初の3つのパスのみ
+        })
+
+# 使用例
+custom_detector = CustomResourceDetector()
+detected_resource = custom_detector.detect()
+
+# 既存のリソースとマージ
+final_resource = Resource.get_empty().merge(detected_resource)
+```
+
+**結論**: Python版では、リソース情報とログ属性が**分離されて管理**され、エクスポート時にOTLP形式で適切に結合されます。これにより、サービス識別情報とログ固有の情報が明確に区別されながらも、関連付けられた形でテレメトリーシステムに送信されます。
+
+---
+
 ## 8. デバッグとトラブルシューティング
 
 ### 8.1 問題診断フローチャート

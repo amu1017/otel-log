@@ -761,6 +761,40 @@ class BatchLogRecordProcessor {
 
 リソースコンテキストは、**どのサービスからテレメトリーデータが送信されたか**を識別する重要な情報です。OpenTelemetry Java Log4j Appender では、この情報が以下のフローで自動的に付与されます。
 
+#### リソース属性付与の全体フロー
+
+```mermaid
+flowchart TD
+    A[Resource作成] -->|明示的設定| B[Service Attributes]
+    A -->|自動検出| C[Process Attributes]
+    A -->|自動検出| D[Host/OS Attributes]
+    
+    B --> E[Resource.merge]
+    C --> E
+    D --> E
+    
+    E --> F[SdkLoggerProvider.setResource]
+    F --> G[LoggerProvider内リソース保持]
+    
+    G --> H[logger.info呼び出し]
+    H --> I[LogEvent → LogRecordBuilder]
+    I --> J[builder.emit]
+    
+    J --> K[LogRecordData作成]
+    K -->|暗黙的関連付け| L[Resource参照付与]
+    L --> M[BatchLogRecordProcessor]
+    M --> N[OtlpExporter]
+    N --> O[ResourceLogs構造]
+    
+    classDef resource fill:#e3f2fd
+    classDef process fill:#fff3e0
+    classDef export fill:#f3e5f5
+    
+    class A,B,C,D,E,F,G resource
+    class H,I,J,K,L process
+    class M,N,O export
+```
+
 #### リソース情報の設定場所
 
 ```java
@@ -781,7 +815,64 @@ SdkLoggerProvider loggerProvider = SdkLoggerProvider.builder()
 
 **重要なポイント**: リソース情報は `SdkLoggerProvider.builder().setResource(resource)` で設定され、そのプロバイダーから作成される**すべてのLogRecord**に自動的に関連付けられます。
 
-#### 自動付与されるリソース属性
+#### 自動付与されるリソース属性の詳細
+
+```mermaid
+graph TD
+    subgraph 明示的設定
+        A[アプリケーション開発者]
+        A1[service.name]
+        A2[service.version]
+        A3[service.namespace]
+        A4[service.instance.id]
+    end
+    
+    subgraph 自動検出システム
+        B[Resource.getDefault]
+        B1[ProcessResourceProvider]
+        B2[HostResourceProvider]
+        B3[OSResourceProvider]
+        B4[ContainerResourceProvider]
+    end
+    
+    subgraph 検出属性
+        C1[process.pid]
+        C2[process.runtime.name]
+        C3[process.runtime.version]
+        C4[host.name]
+        C5[host.arch]
+        C6[os.type]
+        C7[os.description]
+        C8[container.id ※K8s等]
+    end
+    
+    A --> A1
+    A --> A2
+    A --> A3
+    A --> A4
+    
+    B --> B1
+    B --> B2
+    B --> B3
+    B --> B4
+    
+    B1 --> C1
+    B1 --> C2
+    B1 --> C3
+    B2 --> C4
+    B2 --> C5
+    B3 --> C6
+    B3 --> C7
+    B4 --> C8
+    
+    classDef explicit fill:#e8f5e8
+    classDef auto fill:#fff3e0
+    classDef attrs fill:#f3e5f5
+    
+    class A,A1,A2,A3,A4 explicit
+    class B,B1,B2,B3,B4 auto
+    class C1,C2,C3,C4,C5,C6,C7,C8 attrs
+```
 
 OpenTelemetry Java SDK は、明示的に設定した属性に加えて、以下の情報を**自動的**に検出・付与します：
 
@@ -800,6 +891,35 @@ Resource defaultResource = Resource.getDefault();
 ```
 
 #### リソースコンテキスト付与のタイミング
+
+```mermaid
+sequenceDiagram
+    participant App as アプリケーション
+    participant Appender as OpenTelemetryAppender
+    participant SdkLogger as SdkLogger
+    participant Provider as SdkLoggerProvider
+    participant LogRecord as LogRecordData
+    participant Processor as BatchLogRecordProcessor
+
+    Note over Provider: 初期化時にResourceが設定済み
+    Provider->>Provider: resource = Resource(service.name=example, process.pid=12345, ...)
+
+    App->>Appender: logger.info("メッセージ")
+    Appender->>SdkLogger: logRecordBuilder()
+    SdkLogger->>Provider: getLogger()
+    Provider-->>SdkLogger: Logger(resource参照含む)
+
+    Appender->>SdkLogger: builder.setBody("メッセージ")
+    Appender->>SdkLogger: builder.setSeverity(INFO)
+    Appender->>SdkLogger: builder.emit()
+
+    SdkLogger->>LogRecord: LogRecordData作成
+    Note over LogRecord: この時点で暗黙的にResource参照が関連付け
+    LogRecord-->>LogRecord: resource = Provider.getResource()
+    
+    SdkLogger->>Processor: processor.emit(LogRecordData)
+    Note over Processor: LogRecordDataにはResource情報が含まれている
+```
 
 ```java
 // LogRecord 作成時のリソース関連付けフロー
@@ -838,6 +958,44 @@ class SdkLogger {
 ```
 
 #### エクスポート時のリソース情報処理
+
+```mermaid
+flowchart TD
+    A[Collection&lt;LogRecordData&gt;] -->|リソース別グループ化| B[Map&lt;Resource, List&lt;LogRecordData&gt;&gt;]
+    
+    B --> C[Resource 1]
+    B --> D[Resource 2]
+    
+    C --> C1[ResourceLogs.Builder作成]
+    D --> D1[ResourceLogs.Builder作成]
+    
+    C1 --> C2[Resource属性をProtobuf変換]
+    D1 --> D2[Resource属性をProtobuf変換]
+    
+    C2 --> C3[service.name: example-service]
+    C2 --> C4[process.pid: 12345]
+    C2 --> C5[host.name: server-01]
+    
+    D2 --> D3[service.name: other-service]
+    D2 --> D4[process.pid: 67890]
+    D2 --> D5[host.name: server-02]
+    
+    C1 --> C6[LogRecord配列追加]
+    D1 --> D6[LogRecord配列追加]
+    
+    C6 --> E[ExportLogsServiceRequest]
+    D6 --> E
+    
+    classDef input fill:#e3f2fd
+    classDef group fill:#fff3e0
+    classDef resource fill:#f3e5f5
+    classDef output fill:#e8f5e8
+    
+    class A input
+    class B,C,D group
+    class C1,C2,C3,C4,C5,D1,D2,D3,D4,D5 resource
+    class C6,D6,E output
+```
 
 ```java
 // OtlpGrpcLogRecordExporter でのリソース処理
@@ -897,6 +1055,62 @@ public CompletableResultCode export(Collection<LogRecordData> logs) {
 **結論**: リソース情報とログ属性は**分離されて管理**されており、エクスポート時に適切な形式で結合されます。
 
 #### 実際の OTLP 出力構造
+
+```mermaid
+graph TD
+    subgraph ExportLogsServiceRequest
+        A[resourceLogs配列]
+    end
+    
+    subgraph ResourceLogs
+        B[resource部分]
+        C[logRecords配列]
+    end
+    
+    subgraph Resource部分[リソース情報]
+        D[service.name: otel-log4j-example]
+        E[service.version: 1.0.0]
+        F[process.pid: 12345]
+        G[host.name: server-01]
+    end
+    
+    subgraph LogRecords部分[ログレコード配列]
+        H[LogRecord 1]
+        I[LogRecord 2]
+        J[LogRecord N]
+    end
+    
+    subgraph LogRecord詳細
+        K[timeUnixNano]
+        L[severityNumber]
+        M[body]
+        N[attributes配列]
+    end
+    
+    A --> B
+    A --> C
+    B --> D
+    B --> E
+    B --> F
+    B --> G
+    C --> H
+    C --> I
+    C --> J
+    H --> K
+    H --> L
+    H --> M
+    H --> N
+    
+    classDef request fill:#e3f2fd
+    classDef resource fill:#fff3e0
+    classDef logs fill:#f3e5f5
+    classDef detail fill:#e8f5e8
+    
+    class A request
+    class B,D,E,F,G resource
+    class C,H,I,J logs
+    class K,L,M,N detail
+```
 
 ```json
 {
