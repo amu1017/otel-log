@@ -404,7 +404,7 @@ otel_log_record.attributes = {
 
 ```mermaid
 flowchart TD
-    A[LogRecord受信] -->|on_emit()呼び出し| B{キューに空きあり？}
+    A[LogRecord受信] -->|on_emit呼び出し| B{キューに空きあり？}
     B -->|Yes| C[dequeに追加]
     B -->|No| D{ドロップ戦略？}
     D -->|Drop| E[新しいログ破棄]

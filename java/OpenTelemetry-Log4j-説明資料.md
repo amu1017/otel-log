@@ -369,7 +369,7 @@ public void append(LogEvent event) {
 
 ```mermaid
 flowchart TD
-    A[LogRecord受信] -->|emit()呼び出し| B{キューに空きあり？}
+    A[LogRecord受信] -->|emit呼び出し| B{キューに空きあり？}
     B -->|Yes| C[キューに追加]
     B -->|No| D{ドロップ戦略？}
     D -->|Drop| E[新しいログ破棄]
@@ -561,12 +561,12 @@ graph TD
         B6[bytes trace_id, span_id]
     end
     
-    A1 -->|nanosToEpoch()| B1
-    A2 -->|severity.getNumber()| B2
-    A3 -->|stringValue()| B3
-    A4 -->|forEach convertToKeyValue()| B4
-    A5 -->|resource.getAttributes()| B5
-    A6 -->|getTraceIdBytes()| B6
+    A1 -->|nanosToEpoch| B1
+    A2 -->|severity getNumber| B2
+    A3 -->|stringValue| B3
+    A4 -->|forEach convertToKeyValue| B4
+    A5 -->|resource getAttributes| B5
+    A6 -->|getTraceIdBytes| B6
     
     A --> B
     
