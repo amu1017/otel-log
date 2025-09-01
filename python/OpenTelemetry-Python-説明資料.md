@@ -6,6 +6,10 @@
 
 Python標準ライブラリのloggingと OpenTelemetryの統合により、既存のPythonログコードを変更せずに、OpenTelemetryのテレメトリー機能を追加できます。
 
+**⚠️ 重要**: OpenTelemetry Python のLogging機能は現在「Development」段階であり、将来的に互換性のない変更が行われる可能性があります。本番環境での使用前に最新のドキュメントを確認してください。
+
+**システム要件**: Python 3.9以上（推奨: Python 3.11以上）
+
 ---
 
 ## 1. アーキテクチャ概要
@@ -656,6 +660,26 @@ def setup_logging():
     logging.getLogger("grpc").setLevel(logging.WARNING)
     logging.getLogger("opentelemetry").setLevel(logging.INFO)
 ```
+
+### 7.3 重要な環境変数設定
+
+```bash
+# トレースコンテキストをログに自動注入するために必要
+export OTEL_PYTHON_LOG_CORRELATION=true
+
+# カスタムログフォーマットの指定（オプション）
+export OTEL_PYTHON_LOG_FORMAT="%(asctime)s %(levelname)s [%(name)s] [trace_id=%(otelTraceID)s span_id=%(otelSpanID)s] - %(message)s"
+
+# OpenTelemetryのデバッグレベル設定
+export OTEL_LOG_LEVEL=info
+
+# エクスポートエンドポイントの設定
+export OTEL_EXPORTER_OTLP_LOGS_ENDPOINT=http://localhost:4317
+```
+
+**重要な注意事項**:
+- `OTEL_PYTHON_LOG_CORRELATION=true`の設定なしでは、ログにトレースコンテキスト（trace_id、span_id）が自動注入されません
+- LoggingInstrumentorを使用する場合は、`set_logging_format=True`パラメーターで代替可能です
 
 ---
 

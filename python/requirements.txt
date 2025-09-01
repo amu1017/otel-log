@@ -11,34 +11,34 @@
 
 # OpenTelemetry 基本SDK
 # テレメトリーデータ（ログ、メトリクス、トレース）を収集・処理するためのコア機能
-opentelemetry-sdk==1.27.0
+opentelemetry-sdk==1.36.0
 
 # OpenTelemetry ディストリビューション
 # 自動計装機能や簡単なセットアップを提供
-opentelemetry-distro==0.48b0
+opentelemetry-distro==0.57b0
 
 # OpenTelemetry ログ機能
 # ログ特化の機能を提供
-opentelemetry-api==1.27.0
+opentelemetry-api==1.36.0
 
 # OTLP Exporter
 # 収集したテレメトリーデータをOTLP形式でエクスポートするために必要
-opentelemetry-exporter-otlp==1.27.0
+opentelemetry-exporter-otlp==1.36.0
 
-# Pythonログとの統合
+# Pythonログとの統合（Development段階）
 # Python標準ライブラリのloggingモジュールとOpenTelemetryの統合
-opentelemetry-instrumentation-logging==0.48b0
+opentelemetry-instrumentation-logging==0.57b0
 
 # セマンティック規約
 # 標準的な属性名やリソース識別子を提供
-opentelemetry-semantic-conventions==0.48b0
+opentelemetry-semantic-conventions==0.57b0
 
 # OTLP プロトコルバッファ
 # OTLPプロトコル通信に必要
-opentelemetry-proto==1.27.0
+opentelemetry-proto==1.36.0
 
 # 追加のログ機能（Pythonのログハンドラ統合）
-opentelemetry-instrumentation==0.48b0
+opentelemetry-instrumentation==0.57b0
 
 # gRPC サポート（OTLPエクスポート用）
 grpcio==1.66.1

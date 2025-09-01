@@ -6,7 +6,7 @@
 
 ### 調査対象
 - **Java版**: OpenTelemetry Java SDK（1.53.0） + Log4j Appender（2.18.1-alpha）
-- **Python版**: OpenTelemetry Python SDK（1.27.0） + 標準ライブラリlogging
+- **Python版**: OpenTelemetry Python SDK（1.36.0） + 標準ライブラリlogging（Development段階）
 - ライブラリ計装（ゼロコード計装ではなく）
 - ログテレメトリーの実装パターンと比較
 - 各言語でのインスタンス関係性とデータフロー
@@ -21,9 +21,9 @@
 - **Maven**: 3.x
 
 #### Python版
-- **Python**: 3.8以上（推奨3.11）
-- **OpenTelemetry SDK**: 1.27.0
-- **OpenTelemetry Instrumentation**: 0.48b0
+- **Python**: 3.9以上（推奨3.11）
+- **OpenTelemetry SDK**: 1.36.0
+- **OpenTelemetry Instrumentation**: 0.57b0（Development段階）
 - **標準ライブラリ**: logging
 - **パッケージ管理**: pip / pyproject.toml
 
