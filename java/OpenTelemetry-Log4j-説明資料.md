@@ -386,7 +386,7 @@ flowchart TD
     I -->|No| K
     
     J --> L[バッチ作成]
-    L --> M[Exporter.export()]
+    L --> M[Exporter export]
     M --> N{送信成功？}
     N -->|Success| O[バッチクリア]
     N -->|Failure| P[エラーログ記録]
@@ -1288,7 +1288,7 @@ flowchart TD
     B -->|Yes| D{OpenTelemetryAppender.install実行済み？}
     
     C --> D
-    D -->|No| E[main()でinstall実行]
+    D -->|No| E[mainでinstall実行]
     D -->|Yes| F{log4j2.xmlにAppenderRef設定？}
     
     E --> G[問題解決]

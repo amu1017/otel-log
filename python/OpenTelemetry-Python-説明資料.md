@@ -421,7 +421,7 @@ flowchart TD
     I -->|No| K
     
     J --> L[バッチ作成]
-    L --> M[Exporter.export()]
+    L --> M[Exporter export]
     M --> N{送信成功？}
     N -->|Success| O[バッチクリア]
     N -->|Failure| P[エラーログ記録]
@@ -694,11 +694,11 @@ flowchart TD
     B -->|Yes| D{LoggingHandler追加済み？}
     
     C --> D
-    D -->|No| E[logging.getLogger().addHandler実行]
+    D -->|No| E[logging.getLogger addHandler実行]
     D -->|Yes| F{LoggingInstrumentor計装済み？}
     
     E --> G[問題解決]
-    F -->|No| H[LoggingInstrumentor().instrument実行]
+    F -->|No| H[LoggingInstrumentor instrument実行]
     F -->|Yes| I{LoggerProvider正常？}
     
     H --> G
