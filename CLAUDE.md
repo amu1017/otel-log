@@ -247,7 +247,11 @@ podman network inspect bridge
 ### 📚 参考ドキュメント
 
 - **`java/OpenTelemetry-Log4j-説明資料.md`**: Java版技術的詳細とインスタンス関係性の完全解説
+  - 🎨 **包括的なMermaid図**: 11種類の図でアーキテクチャからトラブルシューティングまで完全可視化
+  - フローチャート、シーケンス図、クラス図、状態遷移図、円グラフを駆使した技術解説
 - **`python/OpenTelemetry-Python-説明資料.md`**: Python版技術的詳細とインスタンス関係性の完全解説
+  - 🎨 **包括的なMermaid図**: 11種類の図でPython固有の実装詳細を視覚化
+  - GIL、例外処理、循環参照回避などPython特有の考慮事項も図解
 - **`java/src/main/java/com/example/otel/LoggingExample.java`**: Java実装例とベストプラクティス
 - **`python/src/example_otel/logging_example.py`**: Python実装例とベストプラクティス
 - **図表**: データフローとアーキテクチャの視覚的理解
@@ -338,17 +342,19 @@ mvn exec:java
 
 ### Java版学習順序
 1. **📖 概念理解**: `java/OpenTelemetry-Log4j-説明資料.md` を読む
+   - 🎨 11種類のMermaid図でアーキテクチャから実装詳細まで視覚的に理解
 2. **🎯 コード理解**: `java/src/main/java/com/example/otel/LoggingExample.java` のコメントを追いながらコードを読む
 3. **🔧 設定理解**: `java/src/main/resources/log4j2.xml` と `java/pom.xml` の設定を確認
 4. **▶️ 実行確認**: `mvn exec:java` で実際に動作させる
-5. **🎨 アーキテクチャ**: 図表でデータフローとインスタンス関係性を理解
+5. **🎨 アーキテクチャ**: バッチ処理フロー、エラーハンドリング、OTLPエクスポートの図解で深く理解
 
 ### Python版学習順序
 1. **📖 概念理解**: `python/OpenTelemetry-Python-説明資料.md` を読む
+   - 🎨 11種類のMermaid図でPython固有の実装パターンを視覚的に理解
 2. **🎯 コード理解**: `python/src/example_otel/logging_example.py` のコメントを追いながらコードを読む
 3. **🔧 設定理解**: `python/requirements.txt` と `python/pyproject.toml` の設定を確認
 4. **▶️ 実行確認**: `python -m example_otel.logging_example` で実際に動作させる
-5. **🎨 アーキテクチャ**: 説明資料のデータフローとインスタンス関係性を理解
+5. **🎨 アーキテクチャ**: GIL、例外処理、トラブルシューティングの図解でPython特有の課題を理解
 
 ### 比較学習
 1. **🔄 実装比較**: Java版とPython版の実装方法の違いを理解
@@ -391,7 +397,8 @@ mvn exec:java
 ✅ **最新バージョン**: 2025年最新の安定版を使用  
 ✅ **ベストプラクティス**: 推奨される実装パターンに準拠  
 ✅ **包括的な設定**: Dockerコンテナ、Podman Compose、設定ファイルを完備  
-✅ **視覚的理解**: 詳細解説資料でのデータフロー・インスタンス関係性の可視化  
+✅ **視覚的理解**: **22種類のMermaid図**でデータフロー・インスタンス関係性・エラーハンドリングを完全可視化  
+✅ **技術解説充実**: アーキテクチャから実装詳細、トラブルシューティングまで包括的にカバー  
 
 このプロジェクトを通して、以下を実践的に学習できます：
 

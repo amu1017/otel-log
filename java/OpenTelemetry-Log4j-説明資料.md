@@ -12,19 +12,66 @@ Log4j Appender を使用することで、既存のLog4jコードを変更せず
 
 ### 1.1 コンポーネント構成
 
-```
-[アプリケーションコード]
-        ↓ logger.info() 呼び出し
-[Log4j フレームワーク]
-        ↓ 並列処理で両方に送信
-[Console Appender]     [OpenTelemetry Appender]
-        ↓                      ↓ ログイベントを変換
-[標準出力]              [OpenTelemetry SDK]
-                              ↓ OTLP形式で送信
-                        [外部テレメトリーシステム]
+```mermaid
+flowchart TD
+    A[アプリケーションコード] -->|logger.info 呼び出し| B[Log4j フレームワーク]
+    B -->|並列処理| C[Console Appender]
+    B -->|並列処理| D[OpenTelemetry Appender]
+    C -->|出力| E[標準出力]
+    D -->|ログイベント変換| F[OpenTelemetry SDK]
+    F -->|OTLP形式で送信| G[外部テレメトリーシステム]
+    
+    classDef appCode fill:#e1f5fe
+    classDef log4j fill:#fff3e0
+    classDef otel fill:#f3e5f5
+    classDef external fill:#e8f5e8
+    
+    class A appCode
+    class B,C log4j
+    class D,F otel
+    class G external
 ```
 
 ### 1.2 主要インスタンスの関係性
+
+```mermaid
+classDiagram
+    class OpenTelemetrySdk {
+        +SdkLoggerProvider loggerProvider
+        +SdkTracerProvider tracerProvider
+        +Resource resource
+        +shutdown() void
+    }
+    
+    class SdkLoggerProvider {
+        +List~LogRecordProcessor~ processors
+        +addLogRecordProcessor(processor)
+        +get(instrumentationScopeInfo) Logger
+    }
+    
+    class OpenTelemetryAppender {
+        +LoggerProvider loggerProvider
+        +Logger logger
+        +append(LogEvent) void
+    }
+    
+    class BatchLogRecordProcessor {
+        +LogRecordExporter exporter
+        +List~LogRecordData~ batch
+        +onEmit(LogRecord) void
+        +export() void
+    }
+    
+    class OtlpGrpcLogRecordExporter {
+        +String endpoint
+        +export(Collection~LogRecordData~) CompletableResultCode
+    }
+    
+    OpenTelemetrySdk --> SdkLoggerProvider
+    SdkLoggerProvider --> BatchLogRecordProcessor
+    BatchLogRecordProcessor --> OtlpGrpcLogRecordExporter
+    OpenTelemetryAppender --> SdkLoggerProvider
+```
 
 OpenTelemetry と Log4j の統合では、以下のJavaインスタンスが重要な役割を果たします：
 
@@ -41,6 +88,37 @@ OpenTelemetry と Log4j の統合では、以下のJavaインスタンスが重�
 ## 2. 詳細なデータフロー解析
 
 ### 2.1 ログメッセージの処理フロー
+
+```mermaid
+sequenceDiagram
+    participant App as アプリケーションコード
+    participant Logger as Log4j Logger
+    participant ConsoleApp as Console Appender
+    participant OtelApp as OpenTelemetry Appender
+    participant SDK as OpenTelemetry SDK
+    participant Processor as BatchLogRecordProcessor
+    participant Exporter as OTLP Exporter
+    participant External as 外部システム
+
+    App->>Logger: logger.info("message")
+    Logger->>Logger: LogEvent作成
+    
+    par Console出力
+        Logger->>ConsoleApp: LogEvent
+        ConsoleApp->>ConsoleApp: 標準出力
+    and OpenTelemetry処理
+        Logger->>OtelApp: LogEvent
+        OtelApp->>OtelApp: LogRecord変換
+        OtelApp->>SDK: emit(LogRecord)
+        SDK->>Processor: onEmit(LogRecord)
+        Processor->>Processor: バッチに追加
+        
+        alt バッチ条件満たす
+            Processor->>Exporter: export(batch)
+            Exporter->>External: OTLP送信
+        end
+    end
+```
 
 #### ステップ1: ログメッセージの生成
 ```java
@@ -116,6 +194,30 @@ class OtlpGrpcLogRecordExporter {
 
 ### 2.2 トレースコンテキストとの連携
 
+```mermaid
+sequenceDiagram
+    participant App as アプリケーションコード
+    participant Tracer as OpenTelemetry Tracer
+    participant Context as Thread Context
+    participant Logger as Log4j Logger
+    participant OtelApp as OpenTelemetry Appender
+    participant LogRecord as Log Record
+
+    App->>Tracer: startSpan("operation")
+    Tracer->>Context: makeCurrent() - コンテキスト設定
+    Context->>Context: trace_id=abc123, span_id=def456
+    
+    App->>Logger: logger.info("処理中")
+    Logger->>OtelApp: LogEvent
+    OtelApp->>Context: getCurrentSpanContext()
+    Context-->>OtelApp: trace_id=abc123, span_id=def456
+    OtelApp->>LogRecord: setTraceId(abc123)
+    OtelApp->>LogRecord: setSpanId(def456)
+    OtelApp->>LogRecord: emit()
+    
+    Note over App,LogRecord: ログとトレースが自動関連付け
+```
+
 #### トレースコンテキスト情報の自動付与
 ```java
 // スパンがアクティブな時のログ出力
@@ -134,7 +236,44 @@ try (Scope scope = span.makeCurrent()) {
 
 ## 3. 重要なJavaインスタンス間の関係性
 
-### 3.1 OpenTelemetrySdk（統括管理者）
+### 3.1 OpenTelemetry初期化シーケンス
+
+```mermaid
+sequenceDiagram
+    participant Main as メインアプリケーション
+    participant Resource as Resource
+    participant LogProvider as SdkLoggerProvider
+    participant Processor as BatchLogRecordProcessor
+    participant Exporter as OTLP Exporter
+    participant SDK as OpenTelemetry SDK
+    participant Appender as OpenTelemetry Appender
+
+    Main->>Resource: Resource.create(attributes)
+    Resource-->>Main: リソースインスタンス
+    
+    Main->>Exporter: OtlpGrpcLogRecordExporter.builder()
+    Exporter-->>Main: エクスポーターインスタンス
+    
+    Main->>Processor: BatchLogRecordProcessor.builder()
+    Main->>Processor: setExporter(exporter)
+    Processor-->>Main: プロセッサーインスタンス
+    
+    Main->>LogProvider: SdkLoggerProvider.builder()
+    Main->>LogProvider: setResource(resource)
+    Main->>LogProvider: addLogRecordProcessor(processor)
+    LogProvider-->>Main: ログプロバイダーインスタンス
+    
+    Main->>SDK: OpenTelemetrySdk.builder()
+    Main->>SDK: setLoggerProvider(loggerProvider)
+    SDK-->>Main: SDKインスタンス
+    
+    Main->>Appender: OpenTelemetryAppender.install(sdk)
+    Appender->>LogProvider: 統合完了
+    
+    Note over Main,Appender: OpenTelemetry統合完了
+```
+
+### 3.2 OpenTelemetrySdk（統括管理者）
 
 ```java
 // インスタンス作成時の内部構造
@@ -226,6 +365,45 @@ public void append(LogEvent event) {
 
 ### 3.4 BatchLogRecordProcessor（効率的バッチ処理）
 
+#### バッチ処理フロー図
+
+```mermaid
+flowchart TD
+    A[LogRecord受信] -->|emit()呼び出し| B{キューに空きあり？}
+    B -->|Yes| C[キューに追加]
+    B -->|No| D{ドロップ戦略？}
+    D -->|Drop| E[新しいログ破棄]
+    D -->|Replace| F[古いログ削除→新ログ追加]
+    
+    C --> G{バッチ条件チェック}
+    F --> G
+    
+    G --> H{サイズ達成？}
+    G --> I{時間経過？}
+    H -->|Yes| J[即座にエクスポート]
+    I -->|Yes| J
+    H -->|No| K[待機継続]
+    I -->|No| K
+    
+    J --> L[バッチ作成]
+    L --> M[Exporter.export()]
+    M --> N{送信成功？}
+    N -->|Success| O[バッチクリア]
+    N -->|Failure| P[エラーログ記録]
+    
+    Q[定期スケジューラー] -->|scheduleDelay間隔| J
+    
+    classDef queue fill:#e3f2fd
+    classDef batch fill:#fff3e0
+    classDef export fill:#f3e5f5
+    classDef decision fill:#e8f5e8
+    
+    class A,C,F queue
+    class L,J batch
+    class M,N,O,P export
+    class B,D,G,H,I decision
+```
+
 ```java
 // プロセッサーの内部状態
 class BatchLogRecordProcessor {
@@ -238,6 +416,42 @@ class BatchLogRecordProcessor {
     private final Duration scheduleDelay;    // 送信間隔
     private final Duration exportTimeout;   // 送信タイムアウト
 }
+```
+
+#### バッチ処理の内部状態遷移
+
+```mermaid
+stateDiagram-v2
+    [*] --> Idle: プロセッサー開始
+    
+    Idle --> Accumulating: 初回LogRecord受信
+    Accumulating --> Accumulating: LogRecord追加
+    
+    Accumulating --> Exporting: バッチサイズ達成
+    Accumulating --> Exporting: スケジューラタイマー
+    Accumulating --> Exporting: 強制flush要求
+    
+    Exporting --> NetworkIO: gRPC送信開始
+    NetworkIO --> Success: 送信完了
+    NetworkIO --> Failed: ネットワークエラー
+    
+    Success --> Idle: バッチクリア
+    Failed --> Retry: リトライ可能な場合
+    Failed --> Drop: リトライ回数超過
+    
+    Retry --> NetworkIO: 再送信
+    Drop --> Idle: エラーログ記録後
+    
+    note right of Accumulating
+        キュー内でログレコードが蓄積
+        maxBatchSize: 512 (デフォルト)
+        scheduleDelay: 1秒 (デフォルト)
+    end note
+    
+    note right of NetworkIO
+        非同期gRPC通信
+        CompletableResultCodeによる結果管理
+    end note
 ```
 
 **バッチ処理ロジック**:
@@ -275,6 +489,94 @@ private void exportBatch() {
 
 ### 3.5 OtlpGrpcLogRecordExporter（OTLP送信）
 
+#### OTLP エクスポートプロセス
+
+```mermaid
+flowchart TD
+    A[BatchLogRecordProcessor] -->|Collection&lt;LogRecordData&gt;| B[OtlpGrpcLogRecordExporter]
+    
+    B --> C{リソース別グループ化}
+    C --> D[ResourceLogs.Builder 作成]
+    
+    D --> E[LogRecordData 処理ループ]
+    E --> F[Java データ → Protobuf 変換]
+    
+    F --> G[タイムスタンプ変換]
+    F --> H[ログレベル変換]
+    F --> I[メッセージ本文変換]
+    F --> J[属性変換]
+    
+    G --> K[LogRecord.Builder 組み立て]
+    H --> K
+    I --> K
+    J --> K
+    
+    K --> L[ExportLogsServiceRequest 構築]
+    L --> M[gRPCチャネル取得]
+    M --> N{接続状態確認}
+    
+    N -->|OK| O[非同期gRPC送信]
+    N -->|Error| P[接続エラー]
+    
+    O --> Q[CompletableResultCode 作成]
+    P --> R[エラーResultCode 作成]
+    
+    Q --> S{送信結果}
+    S -->|Success| T[SUCCESS結果返却]
+    S -->|Timeout| U[TIMEOUT結果返却]
+    S -->|Network Error| V[FAILURE結果返却]
+    
+    classDef input fill:#e1f5fe
+    classDef processing fill:#fff3e0
+    classDef network fill:#f3e5f5
+    classDef result fill:#e8f5e8
+    
+    class A,B input
+    class C,D,E,F,G,H,I,J,K,L processing
+    class M,N,O,P network
+    class Q,R,S,T,U,V result
+```
+
+#### OTLP データ変換の詳細
+
+```mermaid
+graph TD
+    subgraph Java Objects
+        A[LogRecordData]
+        A1[Instant timestamp]
+        A2[Severity level]
+        A3[Body text]
+        A4[Attributes Map]
+        A5[Resource]
+        A6[SpanContext]
+    end
+    
+    subgraph Protobuf Structures
+        B[ExportLogsServiceRequest]
+        B1[uint64 time_unix_nano]
+        B2[SeverityNumber enum]
+        B3[AnyValue body]
+        B4[KeyValue attributes]
+        B5[Resource resource]
+        B6[bytes trace_id, span_id]
+    end
+    
+    A1 -->|nanosToEpoch()| B1
+    A2 -->|severity.getNumber()| B2
+    A3 -->|stringValue()| B3
+    A4 -->|forEach convertToKeyValue()| B4
+    A5 -->|resource.getAttributes()| B5
+    A6 -->|getTraceIdBytes()| B6
+    
+    A --> B
+    
+    classDef java fill:#e3f2fd
+    classDef proto fill:#fff3e0
+    
+    class A,A1,A2,A3,A4,A5,A6 java
+    class B,B1,B2,B3,B4,B5,B6 proto
+```
+
 ```java
 // エクスポーターの内部構造
 class OtlpGrpcLogRecordExporter {
@@ -286,6 +588,37 @@ class OtlpGrpcLogRecordExporter {
     // Protobufマーシャラー（バイナリシリアライゼーション）
     private final Marshaller<ExportLogsServiceRequest> requestMarshaller;
 }
+```
+
+#### gRPC 通信フロー
+
+```mermaid
+sequenceDiagram
+    participant Processor as BatchLogRecordProcessor
+    participant Exporter as OtlpGrpcLogRecordExporter
+    participant Channel as gRPC ManagedChannel
+    participant Collector as OpenTelemetry Collector
+    
+    Processor->>Exporter: export(Collection<LogRecordData>)
+    Exporter->>Exporter: データ変換処理
+    
+    Exporter->>Channel: 送信チャネル取得
+    Channel-->>Exporter: チャネル準備完了
+    
+    Exporter->>Channel: 非同期でProtobuf送信
+    Channel->>Collector: HTTP/2 + gRPCプロトコル
+    
+    alt 正常ケース
+        Collector-->>Channel: ExportLogsServiceResponse
+        Channel-->>Exporter: 送信成功
+        Exporter-->>Processor: CompletableResultCode(SUCCESS)
+    else タイムアウト
+        Channel-->>Exporter: TimeoutException
+        Exporter-->>Processor: CompletableResultCode(TIMEOUT)
+    else ネットワークエラー
+        Channel-->>Exporter: StatusException
+        Exporter-->>Processor: CompletableResultCode(FAILURE)
+    end
 ```
 
 **OTLP変換処理**:
@@ -683,6 +1016,96 @@ if (event.getMessage() instanceof MapMessage && captureMapMessageAttributes) {
 
 ## 6. エラーハンドリングと障害対応
 
+### 6.1 エラーハンドリングフロー
+
+```mermaid
+flowchart TD
+    A[エクスポート実行] --> B{送信結果}
+    B -->|Success| C[バッチクリア]
+    B -->|Timeout| D[タイムアウト処理]
+    B -->|NetworkError| E[ネットワークエラー]
+    B -->|ServerError| F[サーバーエラー]
+    
+    C --> G[正常完了]
+    
+    D --> H{リトライ回数チェック}
+    E --> H
+    F --> I{サーバーエラー種別}
+    
+    I -->|4xx Client Error| J[設定エラーログ記録]
+    I -->|5xx Server Error| H
+    I -->|Unknown Error| H
+    
+    H -->|リトライ可能| K[指数バックオフ待機]
+    H -->|回数超過| L[エラーログ記録]
+    
+    K --> A
+    L --> M[バッチ破棄]
+    J --> M
+    
+    M --> N{キュー状態確認}
+    N -->|キュー満杯| O[古いログ削除]
+    N -->|キュー正常| P[継続処理]
+    
+    classDef success fill:#e8f5e8
+    classDef error fill:#ffebee
+    classDef retry fill:#fff3e0
+    classDef decision fill:#e3f2fd
+    
+    class C,G success
+    class D,E,F,J,L,M error
+    class K,A retry
+    class B,H,I,N decision
+```
+
+#### リトライ戦略の詳細
+
+```mermaid
+graph TD
+    subgraph リトライ戦略設定
+        A[初期設定]
+        A1[maxRetryCount: 3]
+        A2[baseRetryDelay: 1秒]
+        A3[maxRetryDelay: 30秒]
+        A4[backoffMultiplier: 2.0]
+    end
+    
+    subgraph 指数バックオフ計算
+        B[リトライ回数に応じた待機時間]
+        B1[1回目: 1秒]
+        B2[2回目: 2秒]
+        B3[3回目: 4秒]
+        B4[4回目以降: 30秒 MAX]
+    end
+    
+    subgraph エラー種別による判定
+        C[一時的エラー]
+        C1[TIMEOUT]
+        C2[UNAVAILABLE]
+        C3[RESOURCE_EXHAUSTED]
+        
+        D[永続的エラー]
+        D1[INVALID_ARGUMENT]
+        D2[PERMISSION_DENIED]
+        D3[UNAUTHENTICATED]
+    end
+    
+    A --> B
+    B --> C
+    B --> D
+    
+    C -->|リトライ実行| B
+    D -->|即座に失敗| E[エラー記録して破棄]
+    
+    classDef config fill:#e3f2fd
+    classDef temp fill:#fff3e0
+    classDef perm fill:#ffebee
+    
+    class A,A1,A2,A3,A4 config
+    class B,B1,B2,B3,B4,C,C1,C2,C3 temp
+    class D,D1,D2,D3,E perm
+```
+
 ### 6.1 エクスポート失敗時の処理
 
 ```java
@@ -738,6 +1161,50 @@ class BatchLogRecordProcessor {
 
 ## 7. パフォーマンスと最適化
 
+### 7.1 リソース使用量とパフォーマンス特性
+
+#### メモリ使用量の内訳
+
+```mermaid
+pie title OpenTelemetry メモリ使用量分布
+    "BatchProcessor Queue" : 70
+    "gRPC Connection Pool" : 15
+    "SDK Core Objects" : 10
+    "Appender Instances" : 3
+    "Protobuf Buffers" : 2
+```
+
+#### CPU使用量の分析
+
+```mermaid
+graph TD
+    subgraph アプリケーションスレッド[軽量処理 - アプリケーションスレッド]
+        A1[logger.info 呼び出し]
+        A2[LogEvent 作成]
+        A3[Appender.append]
+        A4[LogRecord 変換]
+        A5[キューへ追加]
+    end
+    
+    subgraph バックグラウンドスレッド[重い処理 - バックグラウンドスレッド]
+        B1[バッチ処理]
+        B2[Protobuf シリアライゼーション]
+        B3[gRPC 通信]
+        B4[圧縮処理]
+        B5[リトライ処理]
+    end
+    
+    A1 --> A2 --> A3 --> A4 --> A5
+    A5 -.-> B1
+    B1 --> B2 --> B3 --> B4 --> B5
+    
+    classDef light fill:#e8f5e8
+    classDef heavy fill:#fff3e0
+    
+    class A1,A2,A3,A4,A5 light
+    class B1,B2,B3,B4,B5 heavy
+```
+
 ### 7.1 メモリフットプリント
 
 **主要コンポーネントのメモリ使用量**:
@@ -748,6 +1215,36 @@ OpenTelemetrySdk sdk:                    ~100KB（設定オブジェクト）
 BatchLogRecordProcessor queue:           ~数MB（キューサイズに依存）
 OtlpGrpcLogRecordExporter:              ~500KB（gRPC接続プール）
 OpenTelemetryAppender instances:         ~10KB/appender
+```
+
+#### メモリ効率化戦略
+
+```mermaid
+flowchart TD
+    A[メモリ最適化戦略] --> B[キューサイズ調整]
+    A --> C[バッチサイズ調整]
+    A --> D[送信頻度調整]
+    A --> E[属性取得最適化]
+    
+    B --> B1[小さなキュー → 低メモリ使用量]
+    B --> B2[大きなキュー → 高スループット]
+    
+    C --> C1[小バッチ → 低レイテンシ]
+    C --> C2[大バッチ → 高効率送信]
+    
+    D --> D1[高頻度送信 → リアルタイム性]
+    D --> D2[低頻度送信 → CPU効率]
+    
+    E --> E1[必要な属性のみ取得]
+    E --> E2[重い属性（コード情報）無効化]
+    
+    classDef strategy fill:#e3f2fd
+    classDef config fill:#fff3e0
+    classDef effect fill:#e8f5e8
+    
+    class A strategy
+    class B,C,D,E config
+    class B1,B2,C1,C2,D1,D2,E1,E2 effect
 ```
 
 **メモリ効率化設定**:
@@ -782,7 +1279,93 @@ logger.info("メッセージ");  // ← ここは数マイクロ秒で完了
 
 ## 8. トラブルシューティング
 
+### 8.1 問題診断フローチャート
+
+```mermaid
+flowchart TD
+    A[ログが送信されない問題] --> B{デバッグログ有効？}
+    B -->|No| C[デバッグログを有効化]
+    B -->|Yes| D{OpenTelemetryAppender.install実行済み？}
+    
+    C --> D
+    D -->|No| E[main()でinstall実行]
+    D -->|Yes| F{log4j2.xmlにAppenderRef設定？}
+    
+    E --> G[問題解決]
+    F -->|No| H[AppenderRef追加]
+    F -->|Yes| I{SDK正常初期化？}
+    
+    H --> G
+    I -->|No| J[初期化エラー確認]
+    I -->|Yes| K{エクスポーター設定正常？}
+    
+    J --> L[Resource/Exporter設定見直し]
+    K -->|No| M[エンドポイントURL確認]
+    K -->|Yes| N{ネットワーク接続OK？}
+    
+    L --> G
+    M --> G
+    N -->|No| O[Collectorサービス確認]
+    N -->|Yes| P[詳細ログ分析]
+    
+    O --> Q[Collector起動・設定確認]
+    P --> R[バッチ処理状況確認]
+    
+    Q --> G
+    R --> S[パフォーマンスチューニング]
+    S --> G
+    
+    classDef problem fill:#ffebee
+    classDef check fill:#e3f2fd
+    classDef action fill:#fff3e0
+    classDef solution fill:#e8f5e8
+    
+    class A problem
+    class B,D,F,I,K,N check
+    class C,E,H,J,L,M,O,P,Q,R,S action
+    class G solution
+```
+
 ### 8.1 よくある問題と対処法
+
+#### 設定チェックリスト
+
+```mermaid
+graph LR
+    subgraph 初期化チェック
+        A1[SDK初期化]
+        A2[Appender統合]
+        A3[設定ファイル]
+    end
+    
+    subgraph ランタイムチェック
+        B1[ログ出力]
+        B2[バッチ処理]
+        B3[ネットワーク送信]
+    end
+    
+    subgraph エラー確認
+        C1[デバッグログ]
+        C2[例外スタックトレース]
+        C3[メトリクス]
+    end
+    
+    A1 --> B1
+    A2 --> B2
+    A3 --> B3
+    
+    B1 --> C1
+    B2 --> C2
+    B3 --> C3
+    
+    classDef init fill:#e3f2fd
+    classDef runtime fill:#fff3e0
+    classDef debug fill:#f3e5f5
+    
+    class A1,A2,A3 init
+    class B1,B2,B3 runtime
+    class C1,C2,C3 debug
+```
 
 #### 問題1: ログが OpenTelemetry に送信されない
 

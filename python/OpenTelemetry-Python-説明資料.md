@@ -12,19 +12,74 @@ Python標準ライブラリのloggingと OpenTelemetryの統合により、既�
 
 ### 1.1 コンポーネント構成
 
-```
-[アプリケーションコード]
-        ↓ logger.info() 呼び出し
-[Python logging フレームワーク]
-        ↓ 並列処理で両方に送信
-[StreamHandler]          [OpenTelemetry LoggingHandler]
-        ↓                         ↓ ログレコードを変換
-[標準出力]                [OpenTelemetry SDK]
-                                 ↓ OTLP形式で送信
-                          [外部テレメトリーシステム]
+```mermaid
+flowchart TD
+    A[アプリケーションコード] -->|logger.info 呼び出し| B[Python logging フレームワーク]
+    B -->|並列処理| C[StreamHandler]
+    B -->|並列処理| D[OpenTelemetry LoggingHandler]
+    C -->|出力| E[標準出力]
+    D -->|ログレコード変換| F[OpenTelemetry SDK]
+    F -->|OTLP形式で送信| G[外部テレメトリーシステム]
+    
+    classDef appCode fill:#e1f5fe
+    classDef pythonLogging fill:#fff3e0
+    classDef otel fill:#f3e5f5
+    classDef external fill:#e8f5e8
+    
+    class A appCode
+    class B,C pythonLogging
+    class D,F otel
+    class G external
 ```
 
 ### 1.2 主要インスタンスの関係性
+
+```mermaid
+classDiagram
+    class OpenTelemetrySdk {
+        +LoggerProvider logger_provider
+        +TracerProvider tracer_provider  
+        +Resource resource
+        +shutdown() void
+    }
+    
+    class LoggerProvider {
+        +List~LogRecordProcessor~ processors
+        +Resource resource
+        +add_log_record_processor(processor)
+        +get_logger(name) Logger
+    }
+    
+    class LoggingHandler {
+        +LoggerProvider logger_provider
+        +Logger otel_logger
+        +emit(record) void
+    }
+    
+    class BatchLogRecordProcessor {
+        +LogRecordExporter exporter
+        +queue deque
+        +on_emit(log_record) void
+        +force_flush() bool
+    }
+    
+    class OTLPLogExporter {
+        +str endpoint
+        +export(log_records) ExportResult
+        +shutdown() bool
+    }
+    
+    class LoggingInstrumentor {
+        +instrument() void
+        +uninstrument() void
+    }
+    
+    OpenTelemetrySdk --> LoggerProvider
+    LoggerProvider --> BatchLogRecordProcessor
+    BatchLogRecordProcessor --> OTLPLogExporter
+    LoggingHandler --> LoggerProvider
+    LoggingInstrumentor --> LoggingHandler
+```
 
 OpenTelemetry と Python logging の統合では、以下のPythonオブジェクトが重要な役割を果たします：
 
@@ -42,6 +97,40 @@ OpenTelemetry と Python logging の統合では、以下のPythonオブジェ�
 ## 2. 詳細なデータフロー解析
 
 ### 2.1 ログメッセージの処理フロー
+
+```mermaid
+sequenceDiagram
+    participant App as アプリケーションコード
+    participant Logger as Python Logger
+    participant StreamH as StreamHandler
+    participant OtelH as LoggingHandler  
+    participant Provider as LoggerProvider
+    participant Processor as BatchLogRecordProcessor
+    participant Exporter as OTLPLogExporter
+    participant External as 外部システム
+
+    App->>Logger: logger.info("message")
+    Logger->>Logger: LogRecord作成
+    
+    par Console出力
+        Logger->>StreamH: LogRecord
+        StreamH->>StreamH: フォーマット
+        StreamH->>StreamH: 標準出力
+    and OpenTelemetry処理
+        Logger->>OtelH: LogRecord
+        OtelH->>OtelH: LogRecord→OpenTelemetryログレコード変換
+        OtelH->>Provider: emit(otel_log_record)
+        Provider->>Processor: on_emit(otel_log_record)
+        Processor->>Processor: キューに追加
+        
+        alt バッチ条件満たす
+            Processor->>Exporter: export(batch)
+            Exporter->>External: OTLP送信
+            External-->>Exporter: 応答
+            Exporter-->>Processor: ExportResult
+        end
+    end
+```
 
 #### ステップ1: ログメッセージの生成
 ```python
@@ -122,6 +211,44 @@ class BatchLogRecordProcessor:
 
 ### 3.1 初期化シーケンス
 
+```mermaid
+sequenceDiagram
+    participant Main as メインアプリケーション
+    participant Resource as Resource
+    participant Provider as LoggerProvider
+    participant Processor as BatchLogRecordProcessor
+    participant Exporter as OTLPLogExporter
+    participant Handler as LoggingHandler
+    participant Instrumentor as LoggingInstrumentor
+    participant PythonLog as Python logging
+
+    Main->>Resource: Resource.create(attributes)
+    Resource-->>Main: リソースインスタンス
+    
+    Main->>Provider: logs.get_logger_provider()
+    Provider-->>Main: プロバイダーインスタンス
+    
+    Main->>Exporter: OTLPLogExporter(endpoint)
+    Exporter-->>Main: エクスポーターインスタンス
+    
+    Main->>Processor: BatchLogRecordProcessor(exporter)
+    Processor-->>Main: プロセッサーインスタンス
+    
+    Main->>Provider: add_log_record_processor(processor)
+    Provider->>Processor: プロセッサー登録
+    
+    Main->>Handler: LoggingHandler(logger_provider)
+    Handler-->>Main: ハンドラーインスタンス
+    
+    Main->>PythonLog: logging.getLogger().addHandler(handler)
+    PythonLog->>Handler: ハンドラー登録
+    
+    Main->>Instrumentor: LoggingInstrumentor().instrument()
+    Instrumentor->>PythonLog: 自動計装セットアップ
+    
+    Note over Main,PythonLog: OpenTelemetry統合完了
+```
+
 OpenTelemetry Python logging統合の初期化は、以下の順序で実行されます：
 
 ```python
@@ -178,6 +305,30 @@ graph TD
 ## 4. トレースとログの関連付け
 
 ### 4.1 トレースコンテキストの自動伝播
+
+```mermaid
+sequenceDiagram
+    participant App as アプリケーションコード
+    participant Tracer as OpenTelemetry Tracer
+    participant Context as Thread Context
+    participant Logger as Python Logger
+    participant OtelH as LoggingHandler
+    participant LogRecord as OpenTelemetry LogRecord
+
+    App->>Tracer: tracer.start_as_current_span("operation")
+    Tracer->>Context: set_current() - コンテキスト設定
+    Context->>Context: trace_id=abc123, span_id=def456
+    
+    App->>Logger: logger.info("処理中")
+    Logger->>OtelH: LogRecord
+    OtelH->>Context: trace.get_current_span()
+    Context-->>OtelH: trace_id=abc123, span_id=def456
+    OtelH->>LogRecord: set_trace_id(abc123)
+    OtelH->>LogRecord: set_span_id(def456)
+    OtelH->>LogRecord: emit()
+    
+    Note over App,LogRecord: ログとトレースが自動関連付け
+```
 
 OpenTelemetry Python では、トレースコンテキストが自動的にログに関連付けられます：
 
@@ -245,6 +396,76 @@ otel_log_record.attributes = {
 
 ## 5. パフォーマンスと最適化
 
+### 5.1 バッチ処理フロー
+
+```mermaid
+flowchart TD
+    A[LogRecord受信] -->|on_emit()呼び出し| B{キューに空きあり？}
+    B -->|Yes| C[dequeに追加]
+    B -->|No| D{ドロップ戦略？}
+    D -->|Drop| E[新しいログ破棄]
+    D -->|Replace| F[古いログ削除→新ログ追加]
+    
+    C --> G{バッチ条件チェック}
+    F --> G
+    
+    G --> H{サイズ達成？}
+    G --> I{時間経過？}
+    H -->|Yes| J[即座にエクスポート]
+    I -->|Yes| J
+    H -->|No| K[待機継続]
+    I -->|No| K
+    
+    J --> L[バッチ作成]
+    L --> M[Exporter.export()]
+    M --> N{送信成功？}
+    N -->|Success| O[バッチクリア]
+    N -->|Failure| P[エラーログ記録]
+    
+    Q[Threadingタイマー] -->|schedule_delay間隔| J
+    
+    classDef queue fill:#e3f2fd
+    classDef batch fill:#fff3e0
+    classDef export fill:#f3e5f5
+    classDef decision fill:#e8f5e8
+    
+    class A,C,F queue
+    class L,J batch
+    class M,N,O,P export
+    class B,D,G,H,I decision
+```
+
+#### CPU使用量とメモリの分析
+
+```mermaid
+graph TD
+    subgraph メインスレッド[軽量処理 - メインスレッド]
+        A1[logger.info 呼び出し]
+        A2[LogRecord 作成]
+        A3[Handler.emit]
+        A4[OpenTelemetryログレコード変換]
+        A5[dequeへ追加]
+    end
+    
+    subgraph バックグラウンドスレッド[重い処理 - バックグラウンドスレッド]
+        B1[バッチ処理]
+        B2[JSON/Protobuf シリアライゼーション]
+        B3[gRPC 通信]
+        B4[HTTPリクエスト処理]
+        B5[リトライ処理]
+    end
+    
+    A1 --> A2 --> A3 --> A4 --> A5
+    A5 -.-> B1
+    B1 --> B2 --> B3 --> B4 --> B5
+    
+    classDef light fill:#e8f5e8
+    classDef heavy fill:#fff3e0
+    
+    class A1,A2,A3,A4,A5 light
+    class B1,B2,B3,B4,B5 heavy
+```
+
 ### 5.1 バッチ処理の効果
 
 `BatchLogRecordProcessor` により、個々のログメッセージをリアルタイムで送信する代わりに、複数のログをまとめて効率的に送信します：
@@ -262,6 +483,15 @@ processor = BatchLogRecordProcessor(
 
 ### 5.2 メモリ使用量の管理
 
+```mermaid
+pie title Python OpenTelemetry メモリ使用量分布
+    "BatchProcessor deque" : 65
+    "HTTP Connection Pool" : 20
+    "SDK Core Objects" : 10
+    "Handler Instances" : 3
+    "Serialization Buffers" : 2
+```
+
 OpenTelemetry Python では、以下の機能によりメモリ使用量を管理しています：
 
 1. **環状バッファ**: 固定サイズのバッファによるメモリ制限
@@ -271,6 +501,86 @@ OpenTelemetry Python では、以下の機能によりメモリ使用量を管�
 ---
 
 ## 6. エラーハンドリングと信頼性
+
+### 6.1 エラーハンドリングフロー
+
+```mermaid
+flowchart TD
+    A[エクスポート実行] --> B{送信結果}
+    B -->|Success| C[バッチクリア]
+    B -->|Timeout| D[タイムアウト処理]
+    B -->|ConnectionError| E[接続エラー]
+    B -->|HTTPError| F[HTTPエラー]
+    B -->|gRPCError| G[gRPCエラー]
+    
+    C --> H[正常完了]
+    
+    D --> I{リトライ回数チェック}
+    E --> I
+    G --> J{gRPCステータス確認}
+    F --> K{HTTPステータス確認}
+    
+    J -->|UNAVAILABLE/DEADLINE_EXCEEDED| I
+    J -->|INVALID_ARGUMENT/PERMISSION_DENIED| L[設定エラーログ記録]
+    K -->|5xx Server Error| I
+    K -->|4xx Client Error| L
+    
+    I -->|リトライ可能| M[指数バックオフ待機]
+    I -->|回数超過| N[エラーログ記録]
+    
+    M --> A
+    N --> O[バッチ破棄]
+    L --> O
+    
+    O --> P[継続処理]
+    
+    classDef success fill:#e8f5e8
+    classDef error fill:#ffebee
+    classDef retry fill:#fff3e0
+    classDef decision fill:#e3f2fd
+    
+    class C,H success
+    class D,E,F,G,L,N,O error
+    class M,A retry
+    class B,I,J,K decision
+```
+
+#### Python固有のエラーハンドリング
+
+```mermaid
+graph TD
+    subgraph GILとスレッドセーフ
+        A[GIL制約]
+        A1[I/O操作時はGIL解放]
+        A2[CPythonスレッドセーフ性]
+        A3[asyncio統合考慮]
+    end
+    
+    subgraph 例外処理統合
+        B[Python例外処理]
+        B1[logging.Handler.handleError]
+        B2[exc_info自動取得]
+        B3[トレースバック保持]
+    end
+    
+    subgraph 循環参照回避
+        C[循環インポート防止]
+        C1[OpenTelemetryライブラリ自体のログ]
+        C2[無限ループ防止機構]
+        C3[フィルタリング機能]
+    end
+    
+    A --> B
+    B --> C
+    
+    classDef gil fill:#e3f2fd
+    classDef exception fill:#fff3e0
+    classDef circular fill:#f3e5f5
+    
+    class A,A1,A2,A3 gil
+    class B,B1,B2,B3 exception
+    class C,C1,C2,C3 circular
+```
 
 ### 6.1 送信失敗時の処理
 
@@ -350,6 +660,97 @@ def setup_logging():
 ---
 
 ## 8. デバッグとトラブルシューティング
+
+### 8.1 問題診断フローチャート
+
+```mermaid
+flowchart TD
+    A[ログが送信されない問題] --> B{デバッグログ有効？}
+    B -->|No| C[OTEL_LOG_LEVEL=debug設定]
+    B -->|Yes| D{LoggingHandler追加済み？}
+    
+    C --> D
+    D -->|No| E[logging.getLogger().addHandler実行]
+    D -->|Yes| F{LoggingInstrumentor計装済み？}
+    
+    E --> G[問題解決]
+    F -->|No| H[LoggingInstrumentor().instrument実行]
+    F -->|Yes| I{LoggerProvider正常？}
+    
+    H --> G
+    I -->|No| J[プロバイダー設定確認]
+    I -->|Yes| K{エクスポーター設定正常？}
+    
+    J --> L[Resource/Processor設定見直し]
+    K -->|No| M[エンドポイントURL確認]
+    K -->|Yes| N{ネットワーク接続OK？}
+    
+    L --> G
+    M --> G
+    N -->|No| O[Collectorサービス確認]
+    N -->|Yes| P[詳細ログ分析]
+    
+    O --> Q[Collector起動・設定確認]
+    P --> R[バッチ処理状況確認]
+    
+    Q --> G
+    R --> S[パフォーマンスチューニング]
+    S --> G
+    
+    classDef problem fill:#ffebee
+    classDef check fill:#e3f2fd
+    classDef action fill:#fff3e0
+    classDef solution fill:#e8f5e8
+    
+    class A problem
+    class B,D,F,I,K,N check
+    class C,E,H,J,L,M,O,P,Q,R,S action
+    class G solution
+```
+
+#### Python固有のデバッグポイント
+
+```mermaid
+graph LR
+    subgraph 環境変数チェック
+        A1[OTEL_LOG_LEVEL]
+        A2[OTEL_EXPORTER_OTLP_ENDPOINT]
+        A3[OTEL_SERVICE_NAME]
+        A4[PYTHONPATH]
+    end
+    
+    subgraph ライブラリ状態確認
+        B1[logging.getLogger レベル]
+        B2[Handler追加状況]
+        B3[Instrumentor状態]
+        B4[プロセッサー登録]
+    end
+    
+    subgraph パフォーマンス診断
+        C1[GIL競合確認]
+        C2[メモリ使用量]
+        C3[スレッド数]
+        C4[Queue サイズ]
+    end
+    
+    A1 --> B1
+    A2 --> B2
+    A3 --> B3
+    A4 --> B4
+    
+    B1 --> C1
+    B2 --> C2
+    B3 --> C3
+    B4 --> C4
+    
+    classDef env fill:#e3f2fd
+    classDef lib fill:#fff3e0
+    classDef perf fill:#f3e5f5
+    
+    class A1,A2,A3,A4 env
+    class B1,B2,B3,B4 lib
+    class C1,C2,C3,C4 perf
+```
 
 ### 8.1 ログの確認方法
 
